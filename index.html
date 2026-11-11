@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>De Oliver Coach</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #12121c; color: #eee; height: 100vh; display: flex; flex-direction: column; }
+  header { background: #1c1c2e; padding: 14px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #2e2e4a; }
+  header h1 { font-size: 1.1rem; }
+  header .sub { font-size: .75rem; color: #9a9ab8; }
+  #timerbox { margin-left: auto; text-align: right; }
+  #timer { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  #timer.paused { color: #ffb347; }
+  #timerstate { font-size: .7rem; color: #9a9ab8; }
+  #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 78%; padding: 12px 16px; border-radius: 16px; line-height: 1.5; white-space: pre-wrap; }
+  .coach { background: #26315c; align-self: flex-start; border-bottom-left-radius: 4px; }
+  .me { background: #2e6e4e; align-self: flex-end; border-bottom-right-radius: 4px; }
+  .challenge { background: #4a2a5e; align-self: flex-start; border-left: 4px solid #b06ae0; }
+  #controls { background: #1c1c2e; padding: 12px 16px; display: flex; gap: 8px; border-top: 1px solid #2e2e4a; }
+  #input { flex: 1; background: #26263c; border: 1px solid #3c3c5e; color: #eee; border-radius: 12px; padding: 12px 16px; font-size: 1rem; outline: none; }
+  #input:focus { border-color: #6a7ae0; }
+  button { background: #5a6ae0; border: none; color: #fff; border-radius: 12px; padding: 12px 18px; font-size: 1rem; cursor: pointer; }
+  button:hover { background: #6a7ae0; }
+  #mic.rec { background: #e05a6a; }
+  #quick { display: flex; gap: 6px; padding: 0 16px 10px; background: #1c1c2e; flex-wrap: wrap; }
+  #quick button { padding: 7px 12px; font-size: .8rem; background: #2e2e4a; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🏆 De Oliver Coach</h1>
+    <div class="sub">Je persoonlijke Base44-coach — nooit streng, altijd fan</div>
+  </div>
+  <div id="timerbox">
+    <div id="timer">00:00</div>
+    <div id="timerstate">geen uitdaging actief</div>
+  </div>
+</header>
+<div id="chat"></div>
+<div id="quick">
+  <button onclick="quick('geef me een uitdaging')">🎲 Uitdaging</button>
+  <button onclick="quick('moe')">😴 moe</button>
+  <button onclick="quick('start')">▶️ start</button>
+  <button onclick="quick('klaar')">✅ klaar</button>
+  <button onclick="quick('geef me een tip')">💡 tip</button>
+  <button onclick="quick('oke')">oke (stop tips)</button>
+</div>
+<div id="controls">
+  <button id="mic" onclick="toggleMic()" title="Spraakinvoer">🎤</button>
+  <input id="input" placeholder="Typ of spreek... (moe = pauze, start = verder, klaar = klaar)" autocomplete="off">
+  <button onclick="send()">Stuur</button>
+</div>
+
+<script>
+const chat = document.getElementById('chat');
+const input = document.getElementById('input');
+const timerEl = document.getElementById('timer');
+const stateEl = document.getElementById('timerstate');
+
+let seconds = 0, running = false, challengeActive = false, paused = false, tick = null;
+let tipsMode = false, level = 1, currentChallenge = null;
+
+const challenges = {
+  1: ["Bouw een app met één pagina die je top 3 favoriete games laat zien, met een knop die er willekeurig één kiest.",
+      "Maak een pagina met 5 kaarten over jezelf (hobby's, favoriete muziek). Zorg dat het er strak uitziet.",
+      "Bouw een simpel formulier waar je je naam en favo emoji invult en dat daarna een leuk bericht laat zien."],
+  2: ["Voeg een database toe: sla je games op met een rating en laat ze sorteren van hoog naar laag.",
+      "Bouw een to-do lijst die items opslaat, zodat ze er nog staan na een refresh.",
+      "Maak een app waar je films toevoegt met genre, en filter op genre met knoppen."],
+  3: ["Zet inloggen aan: elke gebruiker ziet alleen zijn eigen lijst en niemand anders kan die zien.",
+      "Bouw een app met twee soorten gebruikers: een gewone gebruiker en een beheerder die alles mag bewerken.",
+      "Maak een stem-app: gebruikers stemmen op opties en er is een live teller."],
+  4: ["Voeg een AI-functie toe die automatisch een leuke beschrijving genereert voor elk item in je app.",
+      "Bouw een chatbot-pagina in je eigen app die vragen over je app beantwoordt.",
+      "Laat AI automatisch tags genereren bij elke nieuwe invoer in je database."],
+  5: ["Publiceer je app, deel de link met iemand, en verwerk hun feedback in 3 goed geplande prompts.",
+      "Voeg een externe API-integratie toe: beschrijf exact welke URL, welk data-formaat en wat er met de data gebeurt.",
+      "Gebruik Plan/Discuss mode om een grotere feature te plannen, en bouw hem daarna in 3 kleine stappen."]
+};
+
+const tips = [
+  "Beschrijf je app helder: wat doet het, wie gebruikt het, welke data heeft het nodig. Specifiek = beter resultaat.",
+  "Bouw in kleine stukjes: één feature per prompt. Grote prompts geven chaotische apps.",
+  "Gebruik Plan/Discuss mode om een idee te bespreken zonder dat je app verandert of credits kosten.",
+  "Zet regels in AI controls die de AI bij élke prompt moet onthouden, zoals 'wijzig alleen de homepage'.",
+  "Denk je prompt eerst goed door (of polijst hem in een andere chat) voordat je hem in Base44 plakt. Elke wijziging kost credits!",
+  "Je kunt altijd een oudere versie terugzetten. Dus durf te experimenteren — je kunt niks kapot maken dat je niet kunt herstellen.",
+  "Je eerste versie is een ruwe schets, geen eindresultaat. Itereren is normaal, zelfs voor pros.",
+  "Goede prompt-formule: persona + taak + context + formaat. Bijv: 'Jij bent een UI-designer. Maak een dashboard voor scholieren. Ronde hoeken, donkere modus.'",
+  "Gebruik beschrijvende woorden voor design: 'modern', 'speels', 'rustig'. Hoe meer beeld je geeft, hoe beter het resultaat.",
+  "Test je app alsof je een echte gebruiker bent. Klik overal op en beschrijf wat kapot gaat in gewone taal.",
+  "Bij een API-koppeling: beschrijf exact welke URL, welk formaat (JSON), en wat er met de reactie moet gebeuren.",
+  "Doe vóór het publiceren de ingebouwde security check, zodat alleen de juiste mensen de juiste data zien.",
+  "Kijk in de Prompt Library en templates voor inspiratie — je hoeft niet alles zelf te verzinnen."
+];
+
+function addMsg(text, cls) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.textContent = text;
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function fmt(s) {
+  return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0');
+}
+
+function renderTimer() {
+  timerEl.textContent = fmt(seconds);
+  timerEl.classList.toggle('paused', paused);
+  stateEl.textContent = !challengeActive ? 'geen uitdaging actief' : paused ? '⏸ gepauzeerd (typ: start)' : running ? '⏱ loopt!' : '';
+}
+
+function startTimer() {
+  challengeActive = true; paused = false; running = true;
+  clearInterval(tick);
+  tick = setInterval(() => { seconds++; renderTimer(); }, 1000);
+  renderTimer();
+}
+
+function pauseTimer() {
+  running = false; paused = true;
+  clearInterval(tick);
+  renderTimer();
+}
+
+function resumeTimer() {
+  running = true; paused = false;
+  clearInterval(tick);
+  tick = setInterval(() => { seconds++; renderTimer(); }, 1000);
+  renderTimer();
+}
+
+function stopTimer() {
+  running = false; paused = false;
+  clearInterval(tick);
+  renderTimer();
+}
+
+function randomTip() { return tips[Math.floor(Math.random()*tips.length)]; }
+
+function newChallenge() {
+  const pool = challenges[Math.min(level,5)];
+  currentChallenge = pool[Math.floor(Math.random()*pool.length)];
+  seconds = 0;
+  startTimer();
+  return "🎯 Nieuwe uitdaging (niveau " + Math.min(level,5) + "):\n\n" + currentChallenge +
+    "\n\nDe timer loopt! Typ `moe` voor pauze, `start` om verder te gaan, en `klaar` als je klaar bent. Je kunt dit!";
+}
+
+function coachReply(raw) {
+  const t = raw.trim().toLowerCase();
+
+  if (t === 'moe' || t.includes('ik ben moe')) {
+    if (!challengeActive) return "Geen uitdaging actief, maar rusten kan altijd! 😴 Als je er weer in zit, typ je `start`.";
+    pauseTimer();
+    return "Goed dat je het zegt — luisteren naar je lijf is slim, niet zwak! 😴 De timer staat op pauze op " + fmt(seconds) + ". Typ `start` als je er weer klaar voor bent 💪";
+  }
+
+  if (t === 'start') {
+    if (!challengeActive) { startTimer(); return "De timer loopt, go! 🚀"; }
+    if (paused) { resumeTimer(); return "De klok loopt weer vanaf " + fmt(seconds) + ". Let's go! 🔥"; }
+    return "De timer draait al, je bent on fire! 😄";
+  }
+
+  if (t === 'klaar' || t.includes('ben klaar') || t.includes('done')) {
+    if (!challengeActive) return "Er was geen actieve timer, maar klaar is klaar — top! 🎉";
+    const tijd = fmt(seconds);
+    stopTimer();
+    challengeActive = false;
+    if (seconds <= 60) level = Math.min(level + 1, 5);
+    tipsMode = true;
+    return "⏱ Klaar in " + tijd + "!\n\nRespect, dat is snel én netjes gedaan 🎉 Je mag naar niveau " + Math.min(level,5) + ".\n\nWil je horen wat je nóg beter kunt? Zeg het gerust — ik blijf tips geven tot jij 'oke' zegt.";
+  }
+
+  if (t === 'oke' || t === 'oké' || t.includes('genoeg') || t.includes('stop met tips')) {
+    tipsMode = false;
+    return "Clear! Vanaf nu geef ik alleen nog tips als jij erom vraagt. 😎 Typ `geef me een uitdaging` voor de volgende ronde.";
+  }
+
+  if (t.includes('uitdaging') || t.includes('challenge')) return newChallenge();
+
+  if (t.includes('tip')) {
+    tipsMode = true;
+    return "💡 Tip: " + randomTip() + "\n\nIk blijf tips geven tot jij 'oke' zegt.";
+  }
+
+  if (t.includes('hallo') || t.includes('hoi') || t.includes('hey')) {
+    return "Hey Oliver! 👋 Wat gaan we doen: een uitdaging, tips over iets specifieks, of vrij bouwen? Typ `geef me een uitdaging` als je wilt beginnen!";
+  }
+
+  if (t.includes('credits')) {
+    return "Slim dat je aan credits denkt! 💰 Beste truc: schrijf je prompt eerst uit en polijst hem hier, dan plak je in Base44 één perfecte prompt in plaats van vijf rommelige. Elke wijziging kost credits, dus één goede prompt = meer credits over.\n\nNog een tip: " + randomTip();
+  }
+
+  if (t.includes('design') || t.includes('layout') || t.includes('mooi')) {
+    return "Design-vibe tip 🎨: gebruik beschrijvende woorden in je prompt — 'modern', 'speels', 'rustig', 'donkere modus', 'ronde hoeken'. En: wijs de AI eerst met AI controls op regels, dan blijft de stijl overal hetzelfde.";
+  }
+
+  if (t.includes('database') || t.includes('data')) {
+    return "Database-time 🗄️! Begin klein: één tabel met duidelijke velden (bijv. naam, rating, datum). Laat Base44 eerst alleen die tabel bouwen en test hem, dan pas de volgende. Wil je een uitdaging op databaseniveau? Typ `geef me een uitdaging`!";
+  }
+
+  if (t.includes('help') || t.includes('hoe')) {
+    return "Ik help je! 🔧 Vertel precies wat je wilt bereiken en wat er nu gebeurt (wat je typte, wat Base44 deed). Dan geef ik je een concrete volgende stap. En onthoud: je kunt altijd een oude versie terugzetten, dus experimenteren mag!";
+  }
+
+  if (tipsMode) {
+    return "Goed bezig! 💡 Tips voor jou:\n1. " + randomTip() + "\n2. " + randomTip() + "\n\nZeg 'oke' als het genoeg is, of typ `geef me een uitdaging` voor de volgende ronde.";
+  }
+
+  return "Leuk dat je dat deelt! 😄 Wat wil je doen: typ `geef me een uitdaging` voor een timer-uitdaging, of `geef me een tip` voor advies. (En: `moe` = pauze, `start` = verder, `klaar` = klaar.)";
+}
+
+function send() {
+  const text = input.value.trim();
+  if (!text) return;
+  addMsg(text, 'me');
+  input.value = '';
+  setTimeout(() => addMsg(coachReply(text), 'coach'), 350);
+}
+
+function quick(text) { input.value = text; send(); }
+
+input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+let rec = null, micOn = false;
+function toggleMic() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const micBtn = document.getElementById('mic');
+  if (!SR) { addMsg("Spraakinvoer werkt niet in deze browser — gebruik Chrome of Edge, of typ gewoon! 😊", 'coach'); return; }
+  if (micOn) { rec.stop(); return; }
+  rec = new SR();
+  rec.lang = 'nl-NL';
+  rec.interimResults = false;
+  rec.onstart = () => { micOn = true; micBtn.classList.add('rec'); };
+  rec.onend = () => { micOn = false; micBtn.classList.remove('rec'); };
+  rec.onerror = () => { micOn = false; micBtn.classList.remove('rec'); };
+  rec.onresult = e => { input.value = e.results[0][0].transcript; send(); };
+  rec.start();
+}
+
+addMsg("Hey Oliver! 👋 Ik ben De Oliver Coach en ik ga je helpen om de allerbeste te worden in Base44.\n\nZo werkt het:\n• Typ `geef me een uitdaging` → ik geef je een opdracht en de timer start\n• Typ `moe` → timer pauzeert, rust maar rustig\n• Typ `start` → timer loopt weer\n• Typ `klaar` → timer stopt en ik feliciteer je\n• Ik blijf tips geven tot jij 'oke' zegt\n\nJe kunt ook op de 🎤 knop drukken en gewoon praten. Ready? Let's build! 🚀", 'coach');
+</script>
+</body>
+</html>
